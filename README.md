@@ -1,4 +1,4 @@
-# PushToTalk
+# Push To Talk for macOS
 
 A tiny macOS menu-bar app: hold **Fn** to unmute your microphone, release to mute. Plays a subtle sound on each transition. Red dot in the menu bar when muted, green when live.
 
