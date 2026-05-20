@@ -127,9 +127,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isTalking = false
     private let mic = MicController()
 
-    private let unmuteSound = NSSound(named: NSSound.Name("Tink"))
-    private let muteSound = NSSound(named: NSSound.Name("Pop"))
+    private var unmuteSound: NSSound?
+    private var muteSound: NSSound?
     private var launchAtLoginItem: NSMenuItem!
+    private var unmuteSoundMenu: NSMenu!
+    private var muteSoundMenu: NSMenu!
+
+    private static let availableSoundNames: [String] = [
+        "Basso", "Blow", "Bottle", "Frog", "Funk", "Glass",
+        "Hero", "Morse", "Ping", "Pop", "Purr", "Sosumi",
+        "Submarine", "Tink",
+    ]
+    private static let unmuteSoundDefaultsKey = "unmuteSoundName"
+    private static let muteSoundDefaultsKey = "muteSoundName"
+    private static let defaultUnmuteSoundName = "Tink"
+    private static let defaultMuteSoundName = "Pop"
+    // Empty string in UserDefaults represents the "None" choice.
+    private static let noneSoundStoredValue = ""
+    private static let noneSoundDisplayName = "None"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -138,12 +153,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Push To Talk — hold Fn to talk", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
+
+        let unmuteSoundItem = NSMenuItem(title: "Unmute Sound", action: nil, keyEquivalent: "")
+        unmuteSoundMenu = buildSoundMenu(action: #selector(selectUnmuteSound(_:)))
+        unmuteSoundItem.submenu = unmuteSoundMenu
+        menu.addItem(unmuteSoundItem)
+
+        let muteSoundItem = NSMenuItem(title: "Mute Sound", action: nil, keyEquivalent: "")
+        muteSoundMenu = buildSoundMenu(action: #selector(selectMuteSound(_:)))
+        muteSoundItem.submenu = muteSoundMenu
+        menu.addItem(muteSoundItem)
+
+        menu.addItem(NSMenuItem.separator())
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.target = self
         menu.addItem(launchAtLoginItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
+
+        reloadSounds()
+        refreshSoundMenuStates()
 
         let key = "didAttemptInitialLoginRegistration"
         if !UserDefaults.standard.bool(forKey: key) {
@@ -189,6 +219,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         s?.play()
     }
 
+    private func buildSoundMenu(action: Selector) -> NSMenu {
+        let submenu = NSMenu()
+        let noneItem = NSMenuItem(title: Self.noneSoundDisplayName, action: action, keyEquivalent: "")
+        noneItem.target = self
+        noneItem.representedObject = Self.noneSoundStoredValue
+        submenu.addItem(noneItem)
+        submenu.addItem(NSMenuItem.separator())
+        for name in Self.availableSoundNames {
+            let item = NSMenuItem(title: name, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = name
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    private func currentUnmuteSoundName() -> String {
+        return UserDefaults.standard.string(forKey: Self.unmuteSoundDefaultsKey) ?? Self.defaultUnmuteSoundName
+    }
+
+    private func currentMuteSoundName() -> String {
+        return UserDefaults.standard.string(forKey: Self.muteSoundDefaultsKey) ?? Self.defaultMuteSoundName
+    }
+
+    private func reloadSounds() {
+        let unmuteName = currentUnmuteSoundName()
+        let muteName = currentMuteSoundName()
+        unmuteSound = unmuteName.isEmpty ? nil : NSSound(named: NSSound.Name(unmuteName))
+        muteSound = muteName.isEmpty ? nil : NSSound(named: NSSound.Name(muteName))
+    }
+
+    private func refreshSoundMenuStates() {
+        let unmuteName = currentUnmuteSoundName()
+        let muteName = currentMuteSoundName()
+        for item in unmuteSoundMenu.items {
+            guard let value = item.representedObject as? String else { continue }
+            item.state = (value == unmuteName) ? .on : .off
+        }
+        for item in muteSoundMenu.items {
+            guard let value = item.representedObject as? String else { continue }
+            item.state = (value == muteName) ? .on : .off
+        }
+    }
+
+    private func previewSound(name: String) {
+        guard !name.isEmpty, let sound = NSSound(named: NSSound.Name(name)) else { return }
+        sound.stop()
+        sound.volume = 0.35
+        sound.play()
+    }
+
+    @objc private func selectUnmuteSound(_ sender: NSMenuItem) {
+        let name = (sender.representedObject as? String) ?? Self.noneSoundStoredValue
+        UserDefaults.standard.set(name, forKey: Self.unmuteSoundDefaultsKey)
+        reloadSounds()
+        refreshSoundMenuStates()
+        previewSound(name: name)
+    }
+
+    @objc private func selectMuteSound(_ sender: NSMenuItem) {
+        let name = (sender.representedObject as? String) ?? Self.noneSoundStoredValue
+        UserDefaults.standard.set(name, forKey: Self.muteSoundDefaultsKey)
+        reloadSounds()
+        refreshSoundMenuStates()
+        previewSound(name: name)
+    }
+
     private func updateIcon(muted: Bool) {
         guard let button = statusItem.button else { return }
         let size = NSSize(width: 14, height: 14)
@@ -210,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !trusted {
             let alert = NSAlert()
             alert.messageText = "Accessibility permission needed"
-            alert.informativeText = "PushToTalk needs Accessibility access to detect the Fn key globally. Grant it in System Settings → Privacy & Security → Accessibility, then relaunch."
+            alert.informativeText = "Push To Talk needs Accessibility access to detect the Fn key globally. Grant it in System Settings → Privacy & Security → Accessibility, then relaunch."
             alert.addButton(withTitle: "OK")
             alert.runModal()
         }

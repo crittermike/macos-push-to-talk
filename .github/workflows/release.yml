@@ -26,7 +26,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ -z "$VERSION" ] && VERSION="dev"
           ZIP="PushToTalk-${VERSION}.zip"
-          ditto -c -k --sequesterRsrc --keepParent PushToTalk.app "$ZIP"
+          ditto -c -k --sequesterRsrc --keepParent "Push To Talk.app" "$ZIP"
           shasum -a 256 "$ZIP" > "$ZIP.sha256"
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
 

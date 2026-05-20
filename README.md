@@ -4,12 +4,12 @@ A tiny macOS menu-bar app: hold **Fn** to unmute your microphone, release to mut
 
 ## Install (prebuilt)
 
-Grab the latest `PushToTalk-x.y.z.zip` from the [Releases page](https://github.com/crittermike/macos-push-to-talk/releases), unzip, and drag `PushToTalk.app` to `/Applications`.
+Grab the latest `PushToTalk-x.y.z.zip` from the [Releases page](https://github.com/crittermike/macos-push-to-talk/releases), unzip, and drag `Push To Talk.app` to `/Applications`.
 
 The release binary is unsigned (ad-hoc signed only). On first launch, macOS Gatekeeper will block it — right-click the app → **Open**, then click **Open** in the dialog. Or run:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/PushToTalk.app
+xattr -dr com.apple.quarantine "/Applications/Push To Talk.app"
 ```
 
 ## Build from source
@@ -18,7 +18,7 @@ Requires macOS 13+ and the Swift toolchain (`xcode-select --install`).
 
 ```sh
 ./build-app.sh
-open ./PushToTalk.app
+open "./Push To Talk.app"
 ```
 
 ## First run
@@ -32,7 +32,7 @@ open ./PushToTalk.app
 
 - Watches `NSEvent.flagsChanged` globally for the `.function` modifier.
 - Toggles the default input device's mute state via CoreAudio (`kAudioDevicePropertyMute`); falls back to driving input volume to 0/1 on devices that don't expose hardware mute.
-- Plays the system sounds **Tink** (unmute) and **Pop** (mute) at low volume.
+- Plays a configurable system sound on each transition (defaults: **Tink** for unmute, **Pop** for mute). Pick from the **Unmute Sound** / **Mute Sound** submenus in the menu bar — selections are remembered, and choosing "None" disables that sound.
 - Starts muted; restores unmuted on quit so you don't get stuck silenced.
 - Launch at login uses `SMAppService` (macOS 13+).
 
@@ -44,5 +44,5 @@ open ./PushToTalk.app
 
 ## Releases
 
-Tagging a `v*` tag on `main` triggers `.github/workflows/release.yml`, which builds the app on `macos-14`, zips `PushToTalk.app`, and uploads it to a GitHub Release with a SHA-256 sum.
+Tagging a `v*` tag on `main` triggers `.github/workflows/release.yml`, which builds the app on `macos-14`, zips `Push To Talk.app`, and uploads it to a GitHub Release with a SHA-256 sum.
 
