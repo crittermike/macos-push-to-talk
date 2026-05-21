@@ -31,7 +31,8 @@ open "./Push To Talk.app"
 ## How it works
 
 - Watches `NSEvent.flagsChanged` globally for the `.function` modifier.
-- Toggles the default input device's mute state via CoreAudio (`kAudioDevicePropertyMute`); falls back to driving input volume to 0/1 on devices that don't expose hardware mute.
+- Mutes **every input device** on the system (not just the system default) via CoreAudio's `kAudioDevicePropertyMute`, falling back to zeroing the input volume scalar on devices that don't expose hardware mute. This catches apps like Teams or Zoom that pin themselves to a non-default microphone.
+- Listens for device-list changes so a hot-plugged mic — or an aggregate device a meeting app spins up mid-call — picks up the current mute state automatically.
 - Plays a configurable system sound on each transition (defaults: **Tink** for unmute, **Pop** for mute). Pick from the **Unmute Sound** / **Mute Sound** submenus in the menu bar — selections are remembered, and choosing "None" disables that sound.
 - Starts muted; restores unmuted on quit so you don't get stuck silenced.
 - Launch at login uses `SMAppService` (macOS 13+).

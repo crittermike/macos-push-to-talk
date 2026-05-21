@@ -7,12 +7,16 @@ import ServiceManagement
 
 final class MicController {
     /// Per-device saved input volumes so unmute restores the user's level instead of slamming to 1.0.
+    /// Saved on the FIRST mute we apply to each device so we capture the user's true setting
+    /// (including 0, which means "user keeps this mic muted").
     private var savedVolumes: [AudioDeviceID: [UInt32: Float32]] = [:]
     private var currentMuted: Bool = true
-    private var deviceListenerProc: AudioObjectPropertyListenerBlock?
+    private var defaultDeviceListener: AudioObjectPropertyListenerBlock?
+    private var deviceListListener: AudioObjectPropertyListenerBlock?
 
     init() {
         installDefaultInputDeviceListener()
+        installDeviceListListener()
     }
 
     func setMuted(_ muted: Bool) {
@@ -20,14 +24,19 @@ final class MicController {
         applyMuted(muted)
     }
 
-    /// Re-applies the most recently requested mute state. Used when the default input device changes.
+    /// Re-applies the most recently requested mute state. Used when the default input device changes
+    /// or when the device list changes (e.g., a USB mic is plugged in, or an app spins up an aggregate device).
     func reapply() {
         applyMuted(currentMuted)
     }
 
     private func applyMuted(_ muted: Bool) {
-        guard let dev = Self.defaultInputDeviceID() else { return }
+        for dev in Self.allInputDeviceIDs() {
+            applyMuted(muted, to: dev)
+        }
+    }
 
+    private func applyMuted(_ muted: Bool, to dev: AudioDeviceID) {
         // Try the hardware mute property first.
         var muteAddr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
@@ -36,17 +45,14 @@ final class MicController {
         )
         if AudioObjectHasProperty(dev, &muteAddr) && isSettable(dev, &muteAddr) {
             var value: UInt32 = muted ? 1 : 0
-            let status = AudioObjectSetPropertyData(
+            _ = AudioObjectSetPropertyData(
                 dev, &muteAddr, 0, nil,
                 UInt32(MemoryLayout<UInt32>.size), &value
             )
-            if status == noErr {
-                // Some devices accept mute=1 but the volume scalar is what actually carries audio
-                // through Core Audio routing apps. Drive volume too for belt-and-suspenders.
-                applyVolumeFallback(dev: dev, muted: muted)
-                return
-            }
         }
+        // Always also drive the volume scalar: some devices accept mute=1 but the scalar is what
+        // actually carries audio through Core Audio routing apps. If the hardware mute didn't take
+        // (or doesn't exist), the scalar is our only line of defense.
         applyVolumeFallback(dev: dev, muted: muted)
     }
 
@@ -60,19 +66,24 @@ final class MicController {
             guard AudioObjectHasProperty(dev, &addr), isSettable(dev, &addr) else { continue }
 
             if muted {
-                // Save current volume before zeroing.
-                var current: Float32 = 0
-                var size = UInt32(MemoryLayout<Float32>.size)
-                if AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &current) == noErr {
-                    if current > 0 {
+                // Capture the user's volume once, before we ever zero this channel. Skip if we've
+                // already saved it (repeated mute calls would otherwise overwrite the real value
+                // with the 0 we just wrote).
+                if savedVolumes[dev]?[channel] == nil {
+                    var current: Float32 = 0
+                    var size = UInt32(MemoryLayout<Float32>.size)
+                    if AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &current) == noErr {
                         savedVolumes[dev, default: [:]][channel] = current
                     }
                 }
                 var zero: Float32 = 0
                 AudioObjectSetPropertyData(dev, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &zero)
             } else {
-                var restore: Float32 = savedVolumes[dev]?[channel] ?? 1.0
-                AudioObjectSetPropertyData(dev, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &restore)
+                // Only touch the volume if we have a saved value. Devices we never muted (or never
+                // saw) get left alone so we don't blow up an unrelated input.
+                if var restore = savedVolumes[dev]?[channel] {
+                    AudioObjectSetPropertyData(dev, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &restore)
+                }
             }
         }
     }
@@ -90,17 +101,69 @@ final class MicController {
             mElement: kAudioObjectPropertyElementMain
         )
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            // Fired when the user (or system) changes the default input device.
-            // Re-apply the current mute state to the new device.
             DispatchQueue.main.async { self?.reapply() }
         }
-        deviceListenerProc = block
+        defaultDeviceListener = block
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &addr,
             DispatchQueue.main,
             block
         )
+    }
+
+    private func installDeviceListListener() {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            // A device was added or removed (e.g., USB mic plugged in, or Teams/Zoom created an
+            // aggregate device). Re-apply our current mute state so the new device honors it too.
+            DispatchQueue.main.async { self?.reapply() }
+        }
+        deviceListListener = block
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr,
+            DispatchQueue.main,
+            block
+        )
+    }
+
+    /// All audio devices that expose at least one input stream.
+    static func allInputDeviceIDs() -> [AudioDeviceID] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &dataSize
+        ) == noErr, dataSize > 0 else { return [] }
+
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        let status = ids.withUnsafeMutableBufferPointer { buf -> OSStatus in
+            return AudioObjectGetPropertyData(
+                AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &dataSize, buf.baseAddress!
+            )
+        }
+        guard status == noErr else { return [] }
+        return ids.filter { hasInputStreams($0) }
+    }
+
+    private static func hasInputStreams(_ dev: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(dev, &addr, 0, nil, &size) == noErr else { return false }
+        return size > 0
     }
 
     static func defaultInputDeviceID() -> AudioDeviceID? {
