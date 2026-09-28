@@ -591,9 +591,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 color = reading.muted ? .systemRed : .systemGreen
                 if !reading.canPress { detail = "Teams mic control is disabled; unmute may be restricted." }
             case .unavailable(let issue):
-                title = issue == .permissionRequired ? "Teams: Accessibility required" : "Teams: not connected"
-                detail = issue.description
-                symbol = "questionmark.circle"
+                if let standbyTitle = feedback.standbyTitle {
+                    title = standbyTitle
+                    detail = "Open a Teams meeting window to connect."
+                    color = .systemGray
+                } else {
+                    title = issue == .permissionRequired ? "Teams: Accessibility required" : "Teams: state unknown"
+                    detail = issue.description
+                    color = .systemOrange
+                    symbol = "exclamationmark.triangle.fill"
+                    failed = true
+                }
             case .failed(let issue):
                 title = "Teams: state unknown"
                 detail = issue.description
@@ -619,7 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let notice = modes?.notice { detail += " \(notice)" }
         statusTextItem.title = title
         diagnosticItem.title = detail
-        updateIcon(color: color, symbol: symbol, tooltip: "\(title)\n\(detail)")
+        updateIcon(color: color, symbol: symbol, hollow: feedback.standbyTitle != nil, tooltip: "\(title)\n\(detail)")
         if let muted = feedback.transitionSoundMuted, !terminating {
             playSound(muted: muted)
         }
@@ -628,7 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastLoggedStatus = diagnostic
     }
 
-    private func updateIcon(color: NSColor, symbol: String?, tooltip: String) {
+    private func updateIcon(color: NSColor, symbol: String?, hollow: Bool, tooltip: String) {
         guard let button = statusItem.button else { return }
         button.toolTip = tooltip
         button.setAccessibilityLabel(tooltip)
@@ -639,8 +647,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let size = NSSize(width: 14, height: 14)
         let image = NSImage(size: size, flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+            let dot = NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
+            if hollow {
+                color.setStroke()
+                dot.lineWidth = 1.5
+                dot.stroke()
+            } else {
+                color.setFill()
+                dot.fill()
+            }
             return true
         }
         image.isTemplate = false

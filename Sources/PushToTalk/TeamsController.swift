@@ -42,6 +42,8 @@ enum TeamsIssue: Error, Equatable, CustomStringConvertible {
         default: return false
         }
     }
+
+    var isExpectedAbsence: Bool { self == .notRunning || self == .noMeeting }
 }
 
 enum TeamsStatus: Equatable {
@@ -110,6 +112,7 @@ final class TeamsController {
     private var refreshPending = false
     private var worker: Task<Void, Never>?
     private var uncertainAction = false
+    private var muteUnconfirmed = false
 
     private(set) var status: TeamsStatus = .checking
     private(set) var lastIssue: TeamsIssue?
@@ -140,7 +143,6 @@ final class TeamsController {
             lastIssue = nil
             guard let reading else {
                 // Discovery/reconnection never replays this key-down.
-                publish(.unavailable(.noMeeting))
                 refresh()
                 return
             }
@@ -257,10 +259,11 @@ final class TeamsController {
             let issue = (error as? TeamsIssue) ?? .unexpected(error.localizedDescription)
             if case .pressFailed = issue { uncertainAction = true }
             if pressed { uncertainAction = true }
+            if request.muted { muteUnconfirmed = true }
             if issue.isUnavailable || issue == .meetingChanged { reading = nil }
             lastIssue = issue
             NSLog("Push To Talk: %@", issue.description)
-            finish(issue.isUnavailable ? .unavailable(issue) : .failed(issue), request: request)
+            finish(status(for: issue), request: request)
 
             // A failed unmute may still have reached Teams. Attempt one state-aware
             // remute, never another unmute, and never claim a no-op cleared uncertainty.
@@ -279,17 +282,26 @@ final class TeamsController {
             if uncertainAction {
                 publish(.failed(lastIssue ?? .unconfirmed))
             } else {
+                if current.muted { muteUnconfirmed = false }
                 publish(.ready(current))
             }
         } catch {
             guard revision == observedRevision else { return }
             let issue = (error as? TeamsIssue) ?? .unexpected(error.localizedDescription)
             reading = nil
-            publish(issue.isUnavailable ? .unavailable(issue) : .failed(issue))
+            publish(status(for: issue))
         }
     }
 
+    private func status(for issue: TeamsIssue) -> TeamsStatus {
+        if issue.isExpectedAbsence, uncertainAction || muteUnconfirmed {
+            return .failed(.unconfirmed)
+        }
+        return issue.isUnavailable ? .unavailable(issue) : .failed(issue)
+    }
+
     private func finish(_ status: TeamsStatus, request: Request) {
+        if status.confirmedMuted == true { muteUnconfirmed = false }
         guard request.revision == revision else { return }
         publish(status)
     }

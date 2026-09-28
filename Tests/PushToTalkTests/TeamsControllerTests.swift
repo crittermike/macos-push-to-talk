@@ -278,6 +278,80 @@ final class TeamsControllerTests: XCTestCase {
         }
     }
 
+    func testPressWithoutReadingPreservesPermissionAndReadWarnings() async {
+        for issue in [TeamsIssue.permissionRequired, .readFailed(-25204, operation: "AXWindows")] {
+            let fake = FakeTeams()
+            fake.readIssue = issue
+            let controller = await controller(fake)
+            let initialStatus = controller.status
+            controller.setHeld(true)
+            XCTAssertEqual(controller.status, initialStatus)
+            await controller.waitForIdle()
+            XCTAssertEqual(controller.status, initialStatus)
+            XCTAssertTrue(fake.requests.isEmpty)
+        }
+    }
+
+    func testAbsentTeamsAfterFailedMuteRemainsUnconfirmed() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            let fake = FakeTeams()
+            let controller = await controller(fake)
+            controller.setHeld(true)
+            await controller.waitForIdle()
+            fake.writeIssue = .readFailed(-25204, operation: "AXWindows")
+            controller.setHeld(false)
+            await controller.waitForIdle()
+            XCTAssertNil(controller.status.confirmedMuted)
+
+            fake.readIssue = absence
+            controller.refresh()
+            await controller.waitForIdle()
+            XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            controller.setHeld(true)
+            XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            await controller.waitForIdle()
+            XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            XCTAssertEqual(fake.presses, [false])
+        }
+    }
+
+    func testMeetingLossDuringMuteConfirmationRemainsWarning() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            let fake = FakeTeams()
+            let controller = await controller(fake)
+            controller.setHeld(true)
+            await controller.waitForIdle()
+            fake.afterPress = { muted in
+                if muted { fake.readIssue = absence }
+            }
+            controller.setHeld(false)
+            await controller.waitForIdle()
+            XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            controller.refresh()
+            await controller.waitForIdle()
+            XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            XCTAssertEqual(fake.presses, [false, true])
+        }
+    }
+
+    func testConfirmedMuteClearsFailureBeforeStandby() async {
+        let fake = FakeTeams()
+        let controller = await controller(fake)
+        controller.setHeld(true)
+        await controller.waitForIdle()
+        fake.writeIssue = .readFailed(-25204, operation: "AXWindows")
+        controller.setHeld(false)
+        await controller.waitForIdle()
+        fake.muted = true
+        controller.refresh()
+        await controller.waitForIdle()
+        XCTAssertEqual(controller.status.confirmedMuted, true)
+        fake.readIssue = .noMeeting
+        controller.refresh()
+        await controller.waitForIdle()
+        XCTAssertEqual(controller.status, .unavailable(.noMeeting))
+    }
+
     func testChangedMeetingCannotReceiveOldUnmute() async {
         let fake = FakeTeams()
         let controller = await controller(fake)
@@ -548,6 +622,41 @@ final class ControlFeedbackTests: XCTestCase {
             XCTAssertNil(feedback.transitionSoundMuted)
             feedback.update(.teams(.changing(muted: true), nil))
             XCTAssertNil(feedback.lastConfirmedMuted)
+        }
+    }
+
+    func testExpectedTeamsAbsenceUsesNeutralStandby() {
+        for issue in [TeamsIssue.notRunning, .noMeeting] {
+            var feedback = ControlFeedback()
+            feedback.update(ready(true))
+            feedback.update(.teams(.unavailable(issue), nil))
+            XCTAssertEqual(feedback.standbyTitle, "Waiting for a Teams call")
+            XCTAssertNil(feedback.lastConfirmedMuted)
+            XCTAssertNil(feedback.transitionSoundMuted)
+            feedback.update(ready(false))
+            XCTAssertNil(feedback.standbyTitle)
+            XCTAssertEqual(feedback.lastConfirmedMuted, false)
+            XCTAssertNil(feedback.transitionSoundMuted)
+        }
+    }
+
+    func testPermissionAndRealFailuresNeverUseStandby() {
+        let states: [TeamsStatus] = [
+            .unavailable(.permissionRequired),
+            .failed(.readFailed(-25204, operation: "AXWindows")),
+            .failed(.pressFailed(-25204)),
+            .failed(.unconfirmed),
+            .failed(.discoveryLimit),
+            .failed(.noMeeting),
+            .failed(.notRunning),
+        ]
+        for state in states {
+            var feedback = ControlFeedback()
+            feedback.update(ready(true))
+            feedback.update(.teams(state, nil))
+            XCTAssertNil(feedback.standbyTitle)
+            XCTAssertNil(feedback.lastConfirmedMuted)
+            XCTAssertNil(feedback.transitionSoundMuted)
         }
     }
 

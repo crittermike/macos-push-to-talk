@@ -2,7 +2,7 @@
 
 A tiny macOS menu-bar app: hold **Fn** to unmute **Microsoft Teams**, release to mute Teams again. Teams' own mute indicator changes, including the indicator other participants see. The source build defaults to **Microsoft Teams (native)** mode; **System microphones (legacy)** remains an explicit menu choice.
 
-In Teams mode, a **red dot** means Teams was observed muted and a **green dot** means it was observed live. During a normal transition, the dot stays at the last confirmed state until Teams confirms the change; there is no reload/spinner icon. Pending text remains in the menu/tooltip. A gray question mark means no connection/permission/accessible meeting or no confirmed state, and an orange warning means a failure left the state unknown. Teams mode does not play this app's mute/unmute sounds; Teams supplies its own.
+In Teams mode, a **hollow gray dot** with **Waiting for a Teams call** means Teams is not running or no accessible meeting window is available. A **red dot** means Teams was observed muted and a **green dot** means it was observed live. During a normal transition, the dot stays at the last confirmed state until Teams confirms the change; there is no reload/spinner icon. Pending text remains in the menu/tooltip. Missing Accessibility permission and real control/read failures show an **orange warning**, not standby. An unconfirmed mute stays a warning even if the meeting window disappears. Teams mode does not play this app's mute/unmute sounds; Teams supplies its own.
 
 ## Install (prebuilt)
 

@@ -29,9 +29,11 @@ enum ControlStatus {
 struct ControlFeedback {
     private(set) var lastConfirmedMuted: Bool?
     private(set) var transitionSoundMuted: Bool?
+    private(set) var standbyTitle: String?
 
     mutating func update(_ status: ControlStatus) {
         transitionSoundMuted = nil
+        standbyTitle = nil
         switch status {
         case .teams(let state, _):
             switch state {
@@ -39,7 +41,10 @@ struct ControlFeedback {
                 lastConfirmedMuted = reading.muted
             case .changing:
                 break
-            case .checking, .unavailable, .failed:
+            case .unavailable(let issue):
+                lastConfirmedMuted = nil
+                if issue.isExpectedAbsence { standbyTitle = "Waiting for a Teams call" }
+            case .checking, .failed:
                 lastConfirmedMuted = nil
             }
         case .system(let muted):
