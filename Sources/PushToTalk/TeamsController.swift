@@ -102,7 +102,7 @@ final class TeamsController {
     private let pause: () async throws -> Void
     private var reading: TeamsReading?
     private var holdConnectionID: String?
-    private var lastTargetID: String?
+    private var remuteConnectionID: String?
     private var permit: UnmutePermit?
     private var held = false
     private var acceptingInput = true
@@ -140,18 +140,18 @@ final class TeamsController {
         held = down
         permit?.revoke()
         if down {
-            lastIssue = nil
             guard let reading else {
                 // Discovery/reconnection never replays this key-down.
                 refresh()
                 return
             }
+            lastIssue = nil
             let newPermit = UnmutePermit()
             permit = newPermit
             holdConnectionID = reading.connectionID
             enqueue(muted: false, connectionID: reading.connectionID, permit: newPermit)
         } else {
-            requestMute()
+            requestMute(for: holdConnectionID ?? remuteConnectionID)
             holdConnectionID = nil
         }
     }
@@ -169,7 +169,7 @@ final class TeamsController {
         held = false
         permit?.revoke()
         refreshPending = false
-        requestMute()
+        requestMute(for: holdConnectionID ?? remuteConnectionID ?? reading?.connectionID)
         await waitForIdle()
         stopped = true
     }
@@ -178,8 +178,8 @@ final class TeamsController {
         while let worker { await worker.value }
     }
 
-    private func requestMute() {
-        guard let connectionID = holdConnectionID ?? reading?.connectionID ?? lastTargetID else { return }
+    private func requestMute(for connectionID: String?) {
+        guard let connectionID else { return }
         enqueue(muted: true, connectionID: connectionID, permit: nil)
     }
 
@@ -187,7 +187,6 @@ final class TeamsController {
         revision += 1
         pending?.permit?.revoke()
         pending = Request(revision: revision, muted: muted, connectionID: connectionID, permit: permit)
-        lastTargetID = connectionID
         publish(.changing(muted: muted))
         startWorker()
     }
@@ -235,11 +234,13 @@ final class TeamsController {
                 return
             case .unchanged(let current):
                 reading = current
+                if !current.muted { remuteConnectionID = current.connectionID }
                 guard !uncertainAction else { throw TeamsIssue.unconfirmed }
                 finish(.ready(current), request: request)
             case .pressed:
                 pressed = true
                 uncertainAction = true
+                remuteConnectionID = request.connectionID
                 var matchingReads = 0
                 for _ in 0..<confirmationAttempts {
                     try await pause()
@@ -257,9 +258,26 @@ final class TeamsController {
             }
         } catch {
             let issue = (error as? TeamsIssue) ?? .unexpected(error.localizedDescription)
+            if issue.isExpectedAbsence, !pressed, !uncertainAction, !muteUnconfirmed, remuteConnectionID == nil {
+                // The window disappeared before any action. Discard this inactive
+                // hold and its queued release, but never discard a remute we owe.
+                reading = nil
+                lastIssue = nil
+                request.permit?.revoke()
+                if holdConnectionID == request.connectionID { holdConnectionID = nil }
+                if pending?.connectionID == request.connectionID {
+                    pending?.permit?.revoke()
+                    pending = nil
+                }
+                if pending == nil { publish(.unavailable(issue)) }
+                return
+            }
             if case .pressFailed = issue { uncertainAction = true }
             if pressed { uncertainAction = true }
-            if request.muted { muteUnconfirmed = true }
+            if request.muted {
+                muteUnconfirmed = true
+                remuteConnectionID = request.connectionID
+            }
             if issue.isUnavailable || issue == .meetingChanged { reading = nil }
             lastIssue = issue
             NSLog("Push To Talk: %@", issue.description)
@@ -282,7 +300,10 @@ final class TeamsController {
             if uncertainAction {
                 publish(.failed(lastIssue ?? .unconfirmed))
             } else {
-                if current.muted { muteUnconfirmed = false }
+                if current.muted, current.connectionID == remuteConnectionID {
+                    muteUnconfirmed = false
+                    remuteConnectionID = nil
+                }
                 publish(.ready(current))
             }
         } catch {
@@ -301,7 +322,10 @@ final class TeamsController {
     }
 
     private func finish(_ status: TeamsStatus, request: Request) {
-        if status.confirmedMuted == true { muteUnconfirmed = false }
+        if status.confirmedMuted == true, request.connectionID == remuteConnectionID {
+            muteUnconfirmed = false
+            remuteConnectionID = nil
+        }
         guard request.revision == revision else { return }
         publish(status)
     }

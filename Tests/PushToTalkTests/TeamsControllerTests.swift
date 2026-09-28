@@ -278,6 +278,147 @@ final class TeamsControllerTests: XCTestCase {
         }
     }
 
+    func testInactiveFnPairNeverTargetsAnEarlierMeeting() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            for previouslyUsedMeeting in [false, true] {
+                let fake = FakeTeams()
+                if !previouslyUsedMeeting { fake.readIssue = absence }
+                let controller = await controller(fake)
+                if previouslyUsedMeeting {
+                    controller.setHeld(true)
+                    await controller.waitForIdle()
+                    controller.setHeld(false)
+                    await controller.waitForIdle()
+                    fake.readIssue = absence
+                    controller.refresh()
+                    await controller.waitForIdle()
+                }
+                let requests = fake.requests
+                controller.onChange = { status, _ in
+                    var feedback = ControlFeedback()
+                    feedback.update(.teams(status, nil))
+                    XCTAssertEqual(feedback.standbyTitle, "Waiting for a Teams call")
+                }
+                for _ in 0..<2 {
+                    controller.setHeld(true)
+                    await controller.waitForIdle()
+                    controller.setHeld(false)
+                    await controller.waitForIdle()
+                }
+                XCTAssertEqual(controller.status, .unavailable(absence))
+                XCTAssertEqual(fake.requests, requests)
+            }
+        }
+    }
+
+    func testWindowClosedBeforeFnDownStaysInactive() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            for quickTap in [false, true] {
+                let fake = FakeTeams()
+                let controller = await controller(fake)
+                fake.readIssue = absence
+                controller.setHeld(true)
+                if !quickTap { await controller.waitForIdle() }
+                controller.setHeld(false)
+                await controller.waitForIdle()
+                XCTAssertEqual(controller.status, .unavailable(absence))
+                XCTAssertTrue(fake.presses.isEmpty)
+                XCTAssertEqual(fake.requests, quickTap ? [true] : [false])
+                let requests = fake.requests
+                controller.setHeld(true)
+                await controller.waitForIdle()
+                controller.setHeld(false)
+                await controller.waitForIdle()
+                XCTAssertEqual(fake.requests, requests)
+                XCTAssertEqual(controller.status, .unavailable(absence))
+            }
+        }
+    }
+
+    func testQueuedInactiveFnEdgesAreDiscardedAfterDiscovery() async {
+        let fake = FakeTeams()
+        let controller = await controller(fake)
+        fake.readIssue = .noMeeting
+        fake.beforeAction = {
+            fake.beforeAction = nil
+            controller.setHeld(true)
+            controller.setHeld(false)
+        }
+        controller.setHeld(true)
+        controller.setHeld(false)
+        await controller.waitForIdle()
+        XCTAssertEqual(fake.requests, [true])
+        XCTAssertTrue(fake.presses.isEmpty)
+        XCTAssertEqual(controller.status, .unavailable(.noMeeting))
+    }
+
+    func testMeetingAppearingDuringIgnoredHoldRequiresFreshPress() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            let fake = FakeTeams()
+            fake.readIssue = absence
+            let controller = await controller(fake)
+            controller.setHeld(true)
+            await controller.waitForIdle()
+            fake.readIssue = nil
+            controller.refresh()
+            await controller.waitForIdle()
+            controller.setHeld(false)
+            await controller.waitForIdle()
+            XCTAssertTrue(fake.requests.isEmpty)
+            XCTAssertEqual(controller.status.confirmedMuted, true)
+
+            controller.setHeld(true)
+            await controller.waitForIdle()
+            controller.setHeld(false)
+            await controller.waitForIdle()
+            XCTAssertEqual(fake.requests, [false, true])
+            XCTAssertEqual(fake.presses, [false, true])
+            XCTAssertEqual(controller.status.confirmedMuted, true)
+        }
+    }
+
+    func testMissingWindowAfterSuccessfulUnmuteStillRequiresRemute() async {
+        for absence in [TeamsIssue.notRunning, .noMeeting] {
+            for initiallyMuted in [true, false] {
+                let fake = FakeTeams()
+                fake.muted = initiallyMuted
+                let controller = await controller(fake)
+                controller.setHeld(true)
+                await controller.waitForIdle()
+                XCTAssertEqual(controller.status.confirmedMuted, false)
+                fake.readIssue = absence
+                controller.refresh()
+                await controller.waitForIdle()
+                controller.setHeld(false)
+                await controller.waitForIdle()
+                XCTAssertEqual(fake.requests, [false, true])
+                XCTAssertEqual(controller.status, .failed(.unconfirmed))
+                var feedback = ControlFeedback()
+                feedback.update(.teams(controller.status, controller.lastIssue))
+                XCTAssertNil(feedback.standbyTitle)
+                controller.refresh()
+                await controller.waitForIdle()
+                XCTAssertEqual(controller.status, .failed(.unconfirmed))
+            }
+        }
+    }
+
+    func testStopDoesNotRetryACompletedHoldInAbsentMeeting() async {
+        let fake = FakeTeams()
+        let controller = await controller(fake)
+        controller.setHeld(true)
+        await controller.waitForIdle()
+        controller.setHeld(false)
+        await controller.waitForIdle()
+        fake.readIssue = .noMeeting
+        controller.refresh()
+        await controller.waitForIdle()
+        await controller.stop()
+        XCTAssertEqual(fake.requests, [false, true])
+        XCTAssertEqual(controller.status, .unavailable(.noMeeting))
+        XCTAssertNil(controller.lastIssue)
+    }
+
     func testPressWithoutReadingPreservesPermissionAndReadWarnings() async {
         for issue in [TeamsIssue.permissionRequired, .readFailed(-25204, operation: "AXWindows")] {
             let fake = FakeTeams()
