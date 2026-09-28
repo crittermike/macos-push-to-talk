@@ -20,9 +20,14 @@ Select **Control Mode > Microsoft Teams (native)**. Join a meeting and **mute yo
 
 Keep the meeting window open and not minimized. Focus another app, then hold **Fn** whenever you want to speak and release it when you're done.
 
-**Menu bar:** hollow gray = waiting for a Teams call; red = muted; green = live. An orange warning means check Teams and mute directly. During changes, the dot keeps the last confirmed state.
+**Menu bar:**
 
-**This is not a privacy guarantee.** An inaccessible meeting window, lost permission, or a crash can prevent muting.
+- ○ = waiting for a Teams call
+- 🔴 = muted
+- 🟢 = live
+- ⚠️ = check and mute directly in Teams.
+
+During changes, the dot keeps the last confirmed state.
 
 Use **Launch at Login** in the menu to keep the app available.
 
