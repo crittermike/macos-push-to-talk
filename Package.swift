@@ -8,6 +8,10 @@ let package = Package(
         .executableTarget(
             name: "PushToTalk",
             path: "Sources/PushToTalk"
+        ),
+        .testTarget(
+            name: "PushToTalkTests",
+            dependencies: ["PushToTalk"]
         )
     ]
 )
