@@ -373,7 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         installLifecycleObservers()
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refreshState() }
+            MainActor.assumeIsolated { self?.refreshState() }
         }
         refreshTimer = timer
         RunLoop.main.add(timer, forMode: .common)
