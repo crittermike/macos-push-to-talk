@@ -56,6 +56,42 @@ enum TeamsAXArrayReader {
     }
 }
 
+struct TeamsControlCandidate<Element: Hashable> {
+    let window: Element
+    let button: Element
+    let leaveButton: Element
+    let isMainWindow: Bool
+    let isFloatingWindow: Bool
+}
+
+enum TeamsControlSelection {
+    static func select<Element: Hashable>(
+        from candidates: [TeamsControlCandidate<Element>],
+        connectedWindow: Element? = nil
+    ) throws -> TeamsControlCandidate<Element> {
+        let connected = candidates.filter { $0.window == connectedWindow }
+        let regular = candidates.filter { !$0.isFloatingWindow }
+        let main = regular.filter { $0.isMainWindow }
+        let preferred: [TeamsControlCandidate<Element>]
+        // A new floating window or focus change must not redirect an existing hold.
+        if !connected.isEmpty {
+            preferred = connected
+        } else if !main.isEmpty {
+            preferred = main
+        } else if !regular.isEmpty {
+            preferred = regular
+        } else {
+            preferred = candidates
+        }
+
+        var buttons = Set<Element>()
+        let unique = preferred.filter { buttons.insert($0.button).inserted }
+        guard let control = unique.first else { throw TeamsIssue.noMeeting }
+        guard unique.count == 1 else { throw TeamsIssue.ambiguousControls }
+        return control
+    }
+}
+
 // Actor isolation keeps every AX message and traversal off the main thread and serialized.
 actor TeamsAccessibility: TeamsClient {
     private struct ElementIdentity: Hashable {
@@ -161,7 +197,7 @@ actor TeamsAccessibility: TeamsClient {
 
         let previous = cached
         cached = nil
-        var matches: [(AXUIElement, AXUIElement, AXUIElement)] = []
+        var matches: [TeamsControlCandidate<ElementIdentity>] = []
         var visited = 0
         for window in windows {
             if try isMinimized(window) { continue }
@@ -188,14 +224,25 @@ actor TeamsAccessibility: TeamsClient {
                 guard stack.count + children.count <= nodeLimit - visited else { throw TeamsIssue.discoveryLimit }
                 stack.append(contentsOf: children.map { ($0, depth + 1) })
             }
-            if let leaveButton {
-                matches.append(contentsOf: microphones.map { (window, $0, leaveButton) })
+            if let leaveButton, !microphones.isEmpty {
+                let isMain = try attribute(window, kAXMainAttribute as String) as? Bool == true
+                let isFloating = try string(window, kAXSubroleAttribute as String) == kAXFloatingWindowSubrole as String
+                matches.append(contentsOf: microphones.map {
+                    TeamsControlCandidate(
+                        window: ElementIdentity(element: window),
+                        button: ElementIdentity(element: $0),
+                        leaveButton: ElementIdentity(element: leaveButton),
+                        isMainWindow: isMain, isFloatingWindow: isFloating
+                    )
+                })
             }
         }
-        guard !matches.isEmpty else { throw TeamsIssue.noMeeting }
-        guard matches.count == 1, let (window, button, leaveButton) = matches.first else {
-            throw TeamsIssue.ambiguousControls
-        }
+        let selected = try TeamsControlSelection.select(
+            from: matches, connectedWindow: previous.map { ElementIdentity(element: $0.window) }
+        )
+        let window = selected.window.element
+        let button = selected.button.element
+        let leaveButton = selected.leaveButton.element
         let identifier = try string(button, kAXIdentifierAttribute as String)
         let connectionID: String
         if let previous, CFEqual(previous.window, window), CFEqual(previous.button, button),
