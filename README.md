@@ -20,6 +20,8 @@ Select **Control Mode > Microsoft Teams (native)**. Join a meeting and **mute yo
 
 Keep the meeting window open and not minimized. Focus another app, then hold **Fn** whenever you want to speak and release it when you're done.
 
+If multiple Teams windows expose mic controls, the app prefers the main meeting window over a floating view. Once connected, it keeps using that window even when another window appears or gains focus. If that window closes while you're speaking, check mute directly in Teams before pressing Fn again.
+
 **Menu bar:**
 
 - ○ = waiting for a Teams call

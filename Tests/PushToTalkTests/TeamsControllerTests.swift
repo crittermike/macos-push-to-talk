@@ -506,6 +506,37 @@ final class TeamsControllerTests: XCTestCase {
         XCTAssertTrue(fake.presses.isEmpty)
     }
 
+    func testChangedMeetingCannotReceiveOldRelease() async {
+        let fake = FakeTeams()
+        let controller = await controller(fake)
+        controller.setHeld(true)
+        await controller.waitForIdle()
+        fake.connectionID = "meeting-2"
+        controller.setHeld(false)
+        await controller.waitForIdle()
+        XCTAssertEqual(controller.status, .failed(.meetingChanged))
+        XCTAssertEqual(fake.presses, [false])
+    }
+
+    func testAmbiguousControlsRecoveryDoesNotReplayHold() async {
+        let fake = FakeTeams()
+        fake.readIssue = .ambiguousControls
+        let controller = await controller(fake)
+        XCTAssertEqual(controller.status, .failed(.ambiguousControls))
+        controller.setHeld(true)
+        await controller.waitForIdle()
+        fake.readIssue = nil
+        controller.refresh()
+        await controller.waitForIdle()
+        controller.setHeld(false)
+        await controller.waitForIdle()
+        XCTAssertTrue(fake.requests.isEmpty)
+        XCTAssertEqual(controller.status.confirmedMuted, true)
+        controller.setHeld(true)
+        await controller.waitForIdle()
+        XCTAssertEqual(fake.presses, [false])
+    }
+
     func testUnconfirmedUnmuteStaysUnknownDespiteOldMutedReadings() async {
         let fake = FakeTeams()
         fake.neverConfirm = true
@@ -692,6 +723,107 @@ final class TeamsControllerTests: XCTestCase {
         modes.setHeld(true)
         XCTAssertEqual(fake.presses, [false, true])
         _ = await modes.stop()
+    }
+}
+
+final class TeamsControlSelectionTests: XCTestCase {
+    private func candidate(
+        _ window: String, button: String? = nil, main: Bool = false, floating: Bool = false
+    ) -> TeamsControlCandidate<String> {
+        TeamsControlCandidate(
+            window: window, button: button ?? "\(window)-mic", leaveButton: "\(window)-leave",
+            isMainWindow: main, isFloatingWindow: floating
+        )
+    }
+
+    private func select(
+        _ candidates: [TeamsControlCandidate<String>], connected: String? = nil
+    ) -> Result<String, TeamsIssue> {
+        do {
+            return .success(try TeamsControlSelection.select(from: candidates, connectedWindow: connected).button)
+        } catch {
+            return .failure((error as? TeamsIssue) ?? .unexpected(error.localizedDescription))
+        }
+    }
+
+    func testMainMeetingWinsOverFloatingViewOnStartup() {
+        for floatingSubrole in [false, true] {
+            let meeting = candidate("meeting", main: true)
+            let floating = candidate("floating", floating: floatingSubrole)
+            XCTAssertEqual(select([meeting, floating]), .success("meeting-mic"))
+            XCTAssertEqual(select([floating, meeting]), .success("meeting-mic"))
+        }
+    }
+
+    func testRegularMeetingWinsWhenFloatingViewIsMain() {
+        let meeting = candidate("meeting")
+        let floating = candidate("floating", main: true, floating: true)
+        XCTAssertEqual(select([floating, meeting]), .success("meeting-mic"))
+        XCTAssertEqual(select([meeting, floating]), .success("meeting-mic"))
+    }
+
+    func testConnectedMeetingSurvivesFloatingWindowAndFocusChanges() {
+        let meeting = candidate("meeting")
+        let floating = candidate("floating", main: true)
+        XCTAssertEqual(select([meeting]), .success("meeting-mic"))
+        XCTAssertEqual(select([floating, meeting], connected: "meeting"), .success("meeting-mic"))
+        XCTAssertEqual(select([meeting, floating], connected: "meeting"), .success("meeting-mic"))
+        XCTAssertEqual(select([meeting], connected: "meeting"), .success("meeting-mic"))
+    }
+
+    func testConnectedFloatingViewIsKeptWhenMainWindowAppears() {
+        let floating = candidate("floating", floating: true)
+        let meeting = candidate("meeting", main: true)
+        XCTAssertEqual(select([floating]), .success("floating-mic"))
+        XCTAssertEqual(select([meeting, floating], connected: "floating"), .success("floating-mic"))
+    }
+
+    func testMissingConnectedWindowFallsBackToMainMeeting() {
+        let meeting = candidate("meeting", main: true)
+        let floating = candidate("floating", floating: true)
+        XCTAssertEqual(select([floating, meeting], connected: "closed"), .success("meeting-mic"))
+    }
+
+    func testMultipleMicButtonsInPreferredWindowRemainAmbiguous() {
+        let first = candidate("meeting", button: "mic-1", main: true)
+        let second = candidate("meeting", button: "mic-2", main: true)
+        let floating = candidate("floating", floating: true)
+        XCTAssertEqual(select([first, second, floating]), .failure(.ambiguousControls))
+        XCTAssertEqual(select([floating, first, second], connected: "meeting"), .failure(.ambiguousControls))
+    }
+
+    func testDistinctMeetingWindowsWithoutPreferenceRemainAmbiguous() {
+        for main in [false, true] {
+            let first = candidate("meeting-1", main: main)
+            let second = candidate("meeting-2", main: main)
+            XCTAssertEqual(select([first, second]), .failure(.ambiguousControls))
+            XCTAssertEqual(select([second, first]), .failure(.ambiguousControls))
+        }
+    }
+
+    func testConnectedWindowCannotBeReplacedByAnotherMainWindow() {
+        let connected = candidate("connected")
+        let other = candidate("other", main: true)
+        XCTAssertEqual(select([other, connected], connected: "connected"), .success("connected-mic"))
+    }
+
+    func testDuplicateAXReferencesCountAsOneControl() {
+        let first = candidate("window-1", button: "shared-mic")
+        let second = candidate("window-2", button: "shared-mic")
+        XCTAssertEqual(select([first, first, second]), .success("shared-mic"))
+        XCTAssertEqual(select([second, first]), .success("shared-mic"))
+    }
+
+    func testSingleControlDoesNotRequireMainOrStandardWindow() {
+        XCTAssertEqual(select([candidate("meeting")]), .success("meeting-mic"))
+        XCTAssertEqual(select([candidate("floating", floating: true)]), .success("floating-mic"))
+        XCTAssertEqual(select([]), .failure(.noMeeting))
+    }
+
+    func testMultipleFloatingControlsRemainAmbiguous() {
+        let first = candidate("floating-1", floating: true)
+        let second = candidate("floating-2", floating: true)
+        XCTAssertEqual(select([first, second]), .failure(.ambiguousControls))
     }
 }
 

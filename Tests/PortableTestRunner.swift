@@ -34,6 +34,7 @@ struct PortableTestRunner {
     @MainActor
     static func main() async {
         let tests = TeamsControllerTests()
+        let selection = TeamsControlSelectionTests()
         let labels = TeamsButtonLabelsTests()
         let arrays = TeamsAXArrayTests()
         let feedback = ControlFeedbackTests()
@@ -61,6 +62,8 @@ struct PortableTestRunner {
             ("meeting loss during mute", tests.testMeetingLossDuringMuteConfirmationRemainsWarning),
             ("confirmed mute before standby", tests.testConfirmedMuteClearsFailureBeforeStandby),
             ("meeting changed", tests.testChangedMeetingCannotReceiveOldUnmute),
+            ("meeting changed before release", tests.testChangedMeetingCannotReceiveOldRelease),
+            ("ambiguous control recovery", tests.testAmbiguousControlsRecoveryDoesNotReplayHold),
             ("confirmation timeout", tests.testUnconfirmedUnmuteStaysUnknownDespiteOldMutedReadings),
             ("mute failure", tests.testMuteFailureNeverReportsMutedAndDoesNotRetryForever),
             ("accepted AX failure", tests.testAXErrorAfterAcceptedUnmuteStillSettlesBeforeRemuting),
@@ -72,6 +75,17 @@ struct PortableTestRunner {
             ("legacy restoration", tests.testLegacyModeRestoresAndStopsBeforeTeamsIsCreated),
             ("restoration failure", tests.testFailedLegacyRestorePreventsTeamsActivationAndCanBeRetried),
             ("switch to legacy", tests.testSwitchToLegacyFirstConfirmsTeamsMute),
+            ("main meeting over floating view", { selection.testMainMeetingWinsOverFloatingViewOnStartup() }),
+            ("floating view marked main", { selection.testRegularMeetingWinsWhenFloatingViewIsMain() }),
+            ("stable connected meeting", { selection.testConnectedMeetingSurvivesFloatingWindowAndFocusChanges() }),
+            ("stable connected floating view", { selection.testConnectedFloatingViewIsKeptWhenMainWindowAppears() }),
+            ("closed connected window", { selection.testMissingConnectedWindowFallsBackToMainMeeting() }),
+            ("ambiguous preferred window", { selection.testMultipleMicButtonsInPreferredWindowRemainAmbiguous() }),
+            ("ambiguous meeting windows", { selection.testDistinctMeetingWindowsWithoutPreferenceRemainAmbiguous() }),
+            ("no call redirection", { selection.testConnectedWindowCannotBeReplacedByAnotherMainWindow() }),
+            ("duplicate AX controls", { selection.testDuplicateAXReferencesCountAsOneControl() }),
+            ("single meeting control", { selection.testSingleControlDoesNotRequireMainOrStandardWindow() }),
+            ("ambiguous floating controls", { selection.testMultipleFloatingControlsRemainAmbiguous() }),
             ("action labels", { labels.testActionLabelsDescribeOppositeOfCurrentState() }),
             ("unsafe labels", { labels.testSettingsParticipantAndNotificationControlsAreRejected() }),
             ("meeting context", { labels.testMeetingRequiresARealLeaveButton() }),
